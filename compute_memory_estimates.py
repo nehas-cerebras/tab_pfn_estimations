@@ -289,29 +289,32 @@ class TabPFNEstimator:
         why = (f"peak = {ACT_PEAK_COPIES}x(N x 128) fp16 x{self.mult} = "
                f"{fmt_bytes(peak_per_col)}/col")
 
-        # IN  (MemX -> CSX): raw cells for one column band, one copy per estimator
-        in_chunk = BYTES * self.N * Cc * G * self.mult
+        # IN (MemX -> CSX): raw cells, N x C x G, one copy per estimator. Bill the
+        # TRUE total (work is linear in columns) -- NOT Cc*n_chunks, which over-counts
+        # the partial last chunk and makes the wall jump each time n_chunks steps.
+        in_total = BYTES * self.N * self.C * G * self.mult
         # OUT (CSX -> MemX): 3 per-layer summaries (inducing_hidden), kept for phase 2
         out_bytes = 3 * self.C * EMB * EMB * BYTES * self.mult
-        # compute: cell embed + 3 fan-ins (build summaries) + 2 fan-outs
-        flops_chunk = (_embed_flops(self.N, Cc)
-                       + 3 * _block1_flops(self.N, Cc)
-                       + 2 * _block2_flops(self.N, Cc)) * self.mult
-        
+        # compute: cell embed + 3 fan-ins (build summaries) + 2 fan-outs, over full C
+        flops_total = (_embed_flops(self.N, self.C)
+                       + 3 * _block1_flops(self.N, self.C)
+                       + 2 * _block2_flops(self.N, self.C)) * self.mult
+        # per-chunk pieces feed ONLY the double-buffer fill/drain term
+        in_chunk, flops_chunk = in_total / n_chunks, flops_total / n_chunks
+
         t_in_chunk, t_cmp_chunk = _t_mem(in_chunk), _t_flops(flops_chunk)
-        
-        t_in, t_cmp = t_in_chunk * n_chunks, t_cmp_chunk * n_chunks
+        t_in, t_cmp = _t_mem(in_total), _t_flops(flops_total)
         t_out = _t_mem(out_bytes)
         wall = _pipeline_time(n_chunks, t_cmp_chunk, t_in_chunk) + t_out
         return self._record({
             'title': "Stage 1 - Cell + Feature Embedding, Phase 1 (column-wise chunking)",
             'tag': "S1 embed (col-chunk)",
             'axis': "columns", 'n_chunks': n_chunks, 'chunk_desc': f"{Cc} cols", 'why': why,
-            'in_desc': f"raw cells  N x {Cc} x G={G}  x {self.mult} est",
-            'in_chunk': in_chunk, 'in_total': in_chunk * n_chunks, 't_in': t_in,
+            'in_desc': f"raw cells  N x C={self.C} x G={G}  x {self.mult} est",
+            'in_chunk': in_chunk, 'in_total': in_total, 't_in': t_in,
             'out_desc': "3 inducing summaries (kept for Phase 2)",
             'out_bytes': out_bytes, 't_out': t_out,
-            'flops_chunk': flops_chunk, 'flops_total': flops_chunk * n_chunks, 't_cmp': t_cmp,
+            'flops_chunk': flops_chunk, 'flops_total': flops_total, 't_cmp': t_cmp,
             'wall': wall, 'pipelined': True,
             'bound': "memory" if t_in_chunk > t_cmp_chunk else "compute",
         })
@@ -330,27 +333,31 @@ class TabPFNEstimator:
                f"{fmt_bytes(peak_per_row)}/row; Rc = floor((30GB-reserve)/that) = {Rc}; "
                f"n = ceil({rows:,}/Rc) = {n_chunks}")
 
-        # IN  (MemX -> CSX): raw cells for one row band, one copy per estimator
-        in_chunk = BYTES * Rc * self.C * G * self.mult
+        # IN (MemX -> CSX): raw cells, rows x C x G, one copy per estimator. Bill the
+        # TRUE total (work is linear in rows) -- NOT Rc*n_chunks, which over-counts the
+        # partial last chunk and makes the wall jump each time n_chunks steps.
+        in_total = BYTES * rows * self.C * G * self.mult
         # OUT: 512-dim row embeddings, retained on-chip for ICL -> no MemX write
         out_bytes = 0
-        # compute: cell embed + 3 fan-outs (over full C) + column aggregator
-        flops_chunk = (_embed_flops(Rc, self.C)
-                       + 3 * _block2_flops(Rc, self.C)
-                       + _col_agg_flops(Rc, self.C)) * self.mult
+        # compute: cell embed + 3 fan-outs (over full C) + column aggregator, over all rows
+        flops_total = (_embed_flops(rows, self.C)
+                       + 3 * _block2_flops(rows, self.C)
+                       + _col_agg_flops(rows, self.C)) * self.mult
+        # per-chunk pieces feed ONLY the double-buffer fill/drain term
+        in_chunk, flops_chunk = in_total / n_chunks, flops_total / n_chunks
 
         t_in_chunk, t_cmp_chunk = _t_mem(in_chunk), _t_flops(flops_chunk)
-        t_in, t_cmp = t_in_chunk * n_chunks, t_cmp_chunk * n_chunks
+        t_in, t_cmp = _t_mem(in_total), _t_flops(flops_total)
         wall = _pipeline_time(n_chunks, t_cmp_chunk, t_in_chunk)
         return self._record({
             'title': f"Stage 2 - Feature Aggregation, Phase 2, {label.upper()} rows (row-wise chunking)",
             'tag': f"S2 aggregate {label.upper()} (row-chunk)",
             'axis': "rows", 'n_chunks': n_chunks, 'chunk_desc': f"{Rc} rows", 'why': why,
-            'in_desc': f"raw cells  {Rc} x C={self.C} x G={G}  x {self.mult} est",
-            'in_chunk': in_chunk, 'in_total': in_chunk * n_chunks, 't_in': t_in,
+            'in_desc': f"raw cells  {rows:,} x C={self.C} x G={G}  x {self.mult} est",
+            'in_chunk': in_chunk, 'in_total': in_total, 't_in': t_in,
             'out_desc': f"{rows:,} x {D}-d row embeddings retained on-chip (no MemX write)",
             'out_bytes': out_bytes, 't_out': 0.0,
-            'flops_chunk': flops_chunk, 'flops_total': flops_chunk * n_chunks, 't_cmp': t_cmp,
+            'flops_chunk': flops_chunk, 'flops_total': flops_total, 't_cmp': t_cmp,
             'wall': wall, 'pipelined': True,
             'bound': "memory" if t_in_chunk > t_cmp_chunk else "compute",
         })

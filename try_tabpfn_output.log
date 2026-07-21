@@ -1,0 +1,155 @@
+Accuracy 0.9789473684210527
+Model REPR: TabPFNV3(
+  (x_embed): Linear(in_features=6, out_features=128, bias=True)
+  (col_y_encoder): TrainableOrthogonalEmbedding(
+    (embedding): Embedding(160, 128)
+  )
+  (feature_distribution_embedder): FeatureDistributionEmbedder(
+    (layers): ModuleList(
+      (0-2): 3 x InducedSelfAttentionBlock(
+        (cross_attn_block1): CrossAttentionBlock(
+          (attn): CrossAttention(
+            (softmax_scaling_layer): SoftmaxScalingMLP(
+              (base_mlp): Sequential(
+                (0): Linear(in_features=1, out_features=64, bias=True)
+                (1): GELU(approximate='none')
+                (2): Linear(in_features=64, out_features=128, bias=True)
+              )
+              (query_mlp): Sequential(
+                (0): Linear(in_features=16, out_features=64, bias=True)
+                (1): GELU(approximate='none')
+                (2): Linear(in_features=64, out_features=16, bias=True)
+              )
+            )
+            (q_projection): Linear(in_features=128, out_features=128, bias=False)
+            (k_projection): Linear(in_features=128, out_features=128, bias=False)
+            (v_projection): Linear(in_features=128, out_features=128, bias=False)
+            (out_projection): Linear(in_features=128, out_features=128, bias=False)
+          )
+          (mlp): MLP(
+            (0): Linear(in_features=128, out_features=256, bias=False)
+            (1): GELU(approximate='none')
+            (2): Linear(in_features=256, out_features=128, bias=False)
+          )
+          (layernorm_q): _DtypeMatchingRMSNorm((128,), eps=None, elementwise_affine=True)
+          (layernorm_kv): _DtypeMatchingRMSNorm((128,), eps=None, elementwise_affine=True)
+          (layernorm2): _DtypeMatchingRMSNorm((128,), eps=None, elementwise_affine=True)
+        )
+        (cross_attn_block2): CrossAttentionBlock(
+          (attn): CrossAttention(
+            (q_projection): Linear(in_features=128, out_features=128, bias=False)
+            (k_projection): Linear(in_features=128, out_features=128, bias=False)
+            (v_projection): Linear(in_features=128, out_features=128, bias=False)
+            (out_projection): Linear(in_features=128, out_features=128, bias=False)
+          )
+          (mlp): MLP(
+            (0): Linear(in_features=128, out_features=256, bias=False)
+            (1): GELU(approximate='none')
+            (2): Linear(in_features=256, out_features=128, bias=False)
+          )
+          (layernorm_q): _DtypeMatchingRMSNorm((128,), eps=None, elementwise_affine=True)
+          (layernorm_kv): _DtypeMatchingRMSNorm((128,), eps=None, elementwise_affine=True)
+          (layernorm2): _DtypeMatchingRMSNorm((128,), eps=None, elementwise_affine=True)
+        )
+      )
+    )
+  )
+  (column_aggregator): ColumnAggregator(
+    (blocks): ModuleList(
+      (0-2): 3 x TransformerBlock(
+        (attention): Attention(
+          (q_projection): Linear(in_features=128, out_features=128, bias=False)
+          (k_projection): Linear(in_features=128, out_features=128, bias=False)
+          (v_projection): Linear(in_features=128, out_features=128, bias=False)
+          (out_projection): Linear(in_features=128, out_features=128, bias=False)
+        )
+        (layernorm): _DtypeMatchingRMSNorm((128,), eps=None, elementwise_affine=True)
+        (layernorm_mlp): _DtypeMatchingRMSNorm((128,), eps=None, elementwise_affine=True)
+        (mlp): MLP(
+          (0): Linear(in_features=128, out_features=256, bias=False)
+          (1): GELU(approximate='none')
+          (2): Linear(in_features=256, out_features=128, bias=False)
+        )
+      )
+    )
+    (rope): RotaryEmbedding()
+    (out_ln): _DtypeMatchingRMSNorm((128,), eps=None, elementwise_affine=True)
+  )
+  (icl_y_encoder): TrainableOrthogonalEmbedding(
+    (embedding): Embedding(160, 512)
+  )
+  (icl_blocks): ModuleList(
+    (0-23): 24 x ICLTransformerBlock(
+      (icl_attention): ICLAttention(
+        (softmax_scaling_layer): SoftmaxScalingMLP(
+          (base_mlp): Sequential(
+            (0): Linear(in_features=1, out_features=64, bias=True)
+            (1): GELU(approximate='none')
+            (2): Linear(in_features=64, out_features=512, bias=True)
+          )
+          (query_mlp): Sequential(
+            (0): Linear(in_features=64, out_features=64, bias=True)
+            (1): GELU(approximate='none')
+            (2): Linear(in_features=64, out_features=64, bias=True)
+          )
+        )
+        (q_projection): Linear(in_features=512, out_features=512, bias=False)
+        (out_projection): Linear(in_features=512, out_features=512, bias=False)
+        (k_projection): Linear(in_features=512, out_features=512, bias=False)
+        (v_projection): Linear(in_features=512, out_features=512, bias=False)
+      )
+      (layernorm): _DtypeMatchingRMSNorm((512,), eps=None, elementwise_affine=True)
+      (layernorm_mlp): _DtypeMatchingRMSNorm((512,), eps=None, elementwise_affine=True)
+      (mlp): MLP(
+        (0): Linear(in_features=512, out_features=1024, bias=False)
+        (1): GELU(approximate='none')
+        (2): Linear(in_features=1024, out_features=512, bias=False)
+      )
+    )
+  )
+  (output_norm): _DtypeMatchingRMSNorm((512,), eps=None, elementwise_affine=True)
+  (many_class_decoder): ManyClassDecoder(
+    (q_projection): Linear(in_features=512, out_features=384, bias=True)
+    (k_projection): Linear(in_features=512, out_features=384, bias=True)
+    (softmax_scaling_layer): SoftmaxScalingMLP(
+      (base_mlp): Sequential(
+        (0): Linear(in_features=1, out_features=64, bias=True)
+        (1): GELU(approximate='none')
+        (2): Linear(in_features=64, out_features=384, bias=True)
+      )
+      (query_mlp): Sequential(
+        (0): Linear(in_features=64, out_features=64, bias=True)
+        (1): GELU(approximate='none')
+        (2): Linear(in_features=64, out_features=64, bias=True)
+      )
+    )
+  )
+)
+tabpfn version: 8.1.0
+torch version: 2.13.0
+GPU: none
+fit_mode: fit_preprocessors
+n_estimators: 8
+n_estimators_: 8
+inference_precision: auto
+memory_saving_mode: auto
+keep_cache_on_device: True
+device: auto
+number of loaded neural models: 1
+inference config:
+InferenceConfig(PREPROCESS_TRANSFORMS=[PreprocessorConfig(name='squashing_scaler_default', categorical_name='ordinal_very_common_categories_shuffled', append_original=False, max_features_per_estimator=500, global_transformer_name='svd_quarter_components', max_onehot_cardinality=None, differentiable=False), PreprocessorConfig(name='none', categorical_name='numeric', append_original=False, max_features_per_estimator=500, global_transformer_name=None, max_onehot_cardinality=None, differentiable=False)], MAX_UNIQUE_FOR_CATEGORICAL_FEATURES=30, MIN_UNIQUE_FOR_NUMERICAL_FEATURES=4, MIN_NUMBER_SAMPLES_FOR_CATEGORICAL_INFERENCE=100, OUTLIER_REMOVAL_STD='auto', FEATURE_SHIFT_METHOD='shuffle', CLASS_SHIFT_METHOD='shuffle', FINGERPRINT_FEATURE=True, POLYNOMIAL_FEATURES='no', SUBSAMPLE_SAMPLES=None, ENABLE_GPU_PREPROCESSING=True, FEATURE_SUBSAMPLING_METHOD='random', FEATURE_SUBSAMPLING_CONSTANT_FEATURE_COUNT=50, FEATURE_SUBSAMPLING_IMPORTANCE_TOP_K_COUNT='auto', REGRESSION_Y_PREPROCESS_TRANSFORMS=(None, 'safepower'), USE_SKLEARN_16_DECIMAL_PRECISION=False, MAX_NUMBER_OF_CLASSES=160, MAX_NUMBER_OF_FEATURES=2000, MAX_NUMBER_OF_SAMPLES=1000000, FIX_NAN_BORDERS_AFTER_TARGET_TRANSFORM=True, PASSTHROUGH_INF=False, _REGRESSION_DEFAULT_OUTLIER_REMOVAL_STD=None, _CLASSIFICATION_DEFAULT_OUTLIER_REMOVAL_STD=12.0)
+
+architecture config:
+TabPFNV3Config(max_num_classes=160, num_buckets=5000, name='TabPFN-v3', embed_dim=128, dist_embed_num_blocks=3, dist_embed_num_heads=8, dist_embed_num_inducing_points=128, feature_group_size=3, feat_agg_num_blocks=3, feat_agg_num_heads=8, feat_agg_num_cls_tokens=4, feat_agg_rope_base=100000.0, use_rope=True, nlayers=24, icl_num_heads=8, icl_num_kv_heads=None, icl_num_kv_heads_test=1, decoder_head_dim=64, decoder_num_heads=6, decoder_use_softmax_scaling=True, ff_factor=2, dropout=0.0, softmax_scaling_mlp_hidden_dim=64, layernorm_elementwise_affine=True, use_nan_indicators=True, inference_row_chunk_size=2048, inference_col_chunk_size=4)
+total parameters: 53,153,144
+trainable parameters: 53,153,136
+
+parameter count by top-level component:
+x_embed                                   896 dtypes=['torch.float32']
+col_y_encoder                          20,480 dtypes=['torch.float32']
+feature_distribution_embedder         869,616 dtypes=['torch.float32']
+column_aggregator                     394,632 dtypes=['torch.float32']
+icl_y_encoder                          81,920 dtypes=['torch.float32']
+icl_blocks                         51,357,696 dtypes=['torch.float32']
+output_norm                               512 dtypes=['torch.float32']
+many_class_decoder                    427,392 dtypes=['torch.float32']
