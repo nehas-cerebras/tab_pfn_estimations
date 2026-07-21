@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Feature Distribution Embedder — why two phases</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --ink:#1e293b; --muted:#64748b; --line:#e2e8f0;
+    --col:#0f766e; --colfill:#99f6e4;         /* columns = teal */
+    --row:#b45309; --rowfill:#fde68a;         /* rows = amber */
+    --sum:#4338ca; --sumfill:#c7d2fe;         /* inducing summary = indigo */
+    --bad:#dc2626; --badfill:#fecaca;
+    --good:#15803d; --goodfill:#bbf7d0;
+    --dead:#eef1f5;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+       padding:32px 20px 80px}
+  .wrap{max-width:1000px;margin:0 auto}
+  h1{font-size:26px;margin:0 0 6px}
+  .sub{color:var(--muted);margin:0 0 26px;font-size:15px}
+  .tldr{background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:16px 18px;margin-bottom:30px}
+  .tldr b{color:#92400e}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+        padding:22px 24px;margin-bottom:22px;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+  .card h2{font-size:19px;margin:0 0 4px;display:flex;align-items:center;gap:10px}
+  .badge{font-size:12px;font-weight:700;color:#fff;border-radius:999px;padding:2px 10px}
+  .card p{margin:8px 0 0;color:#334155}
+  .card p.note{color:var(--muted);font-size:13.5px}
+  .layout{display:flex;gap:26px;align-items:center;flex-wrap:wrap;margin-top:14px}
+  .layout .txt{flex:1;min-width:240px}
+  .gridbox{display:flex;flex-direction:column;align-items:center;gap:6px}
+  .grid{display:grid;gap:3px}
+  .cell{width:22px;height:22px;border-radius:4px;background:var(--dead);
+        border:1px solid #dfe4ea}
+  .cell.col{background:var(--colfill);border-color:var(--col)}
+  .cell.row{background:var(--rowfill);border-color:var(--row)}
+  .cell.both{background:#fca5a5;border-color:var(--bad)}
+  .cell.sum{background:var(--sumfill);border-color:var(--sum)}
+  .cell.done{background:var(--goodfill);border-color:var(--good)}
+  .cell.bad{background:var(--badfill);border-color:var(--bad)}
+  .axislabel{font-size:12px;color:var(--muted);font-weight:600}
+  .row-axis{writing-mode:vertical-rl;transform:rotate(180deg)}
+  .fl> {display:flex;align-items:center;gap:8px}
+  .arrow{font-size:22px;color:var(--muted)}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;margin:6px 0 24px;font-size:13px}
+  .legend span{display:inline-flex;align-items:center;gap:6px;color:#475569}
+  .sw{width:14px;height:14px;border-radius:4px;display:inline-block;border:1px solid #cbd5e1}
+  .cols-row{display:flex;gap:20px;flex-wrap:wrap}
+  .cols-row > div{flex:1;min-width:260px}
+  .mini h3{margin:0 0 8px;font-size:15px}
+  .verdict{margin-top:10px;font-weight:600;font-size:13.5px}
+  .verdict.bad{color:var(--bad)}
+  .verdict.good{color:var(--good)}
+  .tag{font-size:12px;font-weight:700;padding:1px 8px;border-radius:6px}
+  .tag.col{background:var(--colfill);color:#0b544d}
+  .tag.row{background:var(--rowfill);color:#7c3f06}
+  .tag.sum{background:var(--sumfill);color:#312a94}
+  code{background:#f1f5f9;padding:1px 6px;border-radius:5px;font-size:13px}
+  .caption{font-size:12.5px;color:var(--muted);text-align:center;max-width:220px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Feature Distribution Embedder — why the two phases?</h1>
+  <p class="sub">The data is a grid: <b>R rows × C columns</b>, each cell embedded to a 128-dim vector.</p>
+
+  <div class="tldr">
+    <b>The one-sentence answer:</b> One step needs a <span class="tag col">whole column</span> at a time
+    (all rows), the next step needs a <span class="tag row">whole row</span> at a time (all columns).
+    Those two demands pull in <b>opposite directions</b>, so no single way of slicing the grid satisfies both —
+    that's why the work is split into two passes.
+  </div>
+
+  <div class="legend">
+    <span><i class="sw" style="background:var(--colfill);border-color:var(--col)"></i> column being worked on</span>
+    <span><i class="sw" style="background:var(--rowfill);border-color:var(--row)"></i> row being worked on</span>
+    <span><i class="sw" style="background:var(--sumfill);border-color:var(--sum)"></i> inducing summary (128×128 / col)</span>
+    <span><i class="sw" style="background:var(--goodfill);border-color:var(--good)"></i> done / kept (small)</span>
+    <span><i class="sw" style="background:var(--badfill);border-color:var(--bad)"></i> must be held in memory (big)</span>
+  </div>
+
+  <!-- STAGE 1 -->
+  <div class="card">
+    <h2><span class="badge" style="background:var(--col)">STAGE 1</span> Feature Distribution Embedder — works <u>down a column</u></h2>
+    <div class="layout">
+      <div class="txt">
+        <p>Each <b>column is processed independently</b>. For one column it does two things:</p>
+        <p>• <b>block1</b> reads <b>all R rows</b> of that column and squeezes them into a tiny fixed
+          <span class="tag sum">128×128 summary</span> ("what does this feature's distribution look like?").</p>
+        <p>• <b>block2</b> then gives <b>every row</b> a new embedding by looking at that summary.</p>
+        <p class="note">Key point: to build the summary, block1 must see the <b>entire column at once</b>.
+          Columns never talk to each other here.</p>
+      </div>
+      <div class="gridbox">
+        <div style="display:flex;gap:6px;align-items:center">
+          <span class="axislabel row-axis">R rows</span>
+          <div>
+            <div class="grid" id="g1"></div>
+            <div class="axislabel" style="text-align:center;margin-top:5px">C columns</div>
+          </div>
+          <span class="arrow">→</span>
+          <div class="gridbox">
+            <div class="grid" id="g1s"></div>
+            <div class="caption">summary<br>(1 per column)</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STAGE 2 -->
+  <div class="card">
+    <h2><span class="badge" style="background:var(--row)">STAGE 2</span> Column Aggregator — works <u>across a row</u></h2>
+    <div class="layout">
+      <div class="txt">
+        <p>Now the columns get <b>mixed</b>. For each <b>row</b>, this stage attends across
+          <b>all C columns</b> and collapses them into a small handful of summary tokens
+          (C → 4).</p>
+        <p class="note">Key point: to process one row, it needs <b>all its columns present at the same time</b>.
+          Rows are independent of each other.</p>
+      </div>
+      <div class="gridbox">
+        <div style="display:flex;gap:6px;align-items:center">
+          <span class="axislabel row-axis">R rows</span>
+          <div>
+            <div class="grid" id="g2"></div>
+            <div class="axislabel" style="text-align:center;margin-top:5px">C columns</div>
+          </div>
+          <span class="arrow">→</span>
+          <div class="gridbox">
+            <div class="grid" id="g2s"></div>
+            <div class="caption">4 tokens<br>per row</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CONFLICT -->
+  <div class="card" style="border-color:#fca5a5;background:#fef2f2">
+    <h2>⚔️ The conflict</h2>
+    <div class="layout">
+      <div class="txt">
+        <p><b>Stage 1's block1</b> wants to slice the grid into <span class="tag col">columns</span>
+          (it needs all rows of a column together).</p>
+        <p><b>Stage 2</b> wants to slice the grid into <span class="tag row">rows</span>
+          (it needs all columns of a row together).</p>
+        <p>These are the <b>two perpendicular directions</b> of the same grid. You cannot cut the grid
+          one way and satisfy both. The overlapping cell below is claimed by <b>both</b>.</p>
+      </div>
+      <div class="gridbox">
+        <div style="display:flex;gap:6px;align-items:center">
+          <span class="axislabel row-axis">R rows</span>
+          <div>
+            <div class="grid" id="gx"></div>
+            <div class="axislabel" style="text-align:center;margin-top:5px">C columns</div>
+          </div>
+        </div>
+        <div class="caption">teal column vs. amber row —<br>they cross</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TWO APPROACHES -->
+  <div class="card">
+    <h2>Your idea vs. the two-phase design</h2>
+    <div class="cols-row" style="margin-top:14px">
+
+      <div class="mini">
+        <h3>❌ Slice by columns only</h3>
+        <div class="gridbox">
+          <div class="grid" id="gbad"></div>
+        </div>
+        <p class="note" style="margin-top:10px">Do a few columns at a time through Stage 1 — peak compute
+          memory is small, true. <b>But</b> Stage 2 needs whole rows, so you must <b>keep every column's
+          output</b> until all columns are done. The full grid piles up in memory before Stage 2 can even start.</p>
+        <p class="verdict bad">Ends up holding the entire (R × C × 128) grid ≈ 51.2 GB.</p>
+      </div>
+
+      <div class="mini">
+        <h3>✅ Two phases</h3>
+        <div class="gridbox">
+          <div style="display:flex;gap:6px;align-items:center">
+            <div class="grid" id="gp1"></div>
+            <span class="arrow">→</span>
+            <div class="grid" id="gp2"></div>
+          </div>
+        </div>
+        <p class="note" style="margin-top:10px">
+          <b>Phase 1</b> (left): slice by <span class="tag col">columns</span>, run block1 over all rows,
+          keep only the tiny <span class="tag sum">summaries</span> (≈10 MB). Rows are then thrown away.<br>
+          <b>Phase 2</b> (right): slice by <span class="tag row">rows</span> in bands. Each band flows through
+          block2 <b>and</b> Stage 2 together, reading the cached summaries, and immediately collapses C→4.
+          The big grid is <b>never</b> all in memory at once.</p>
+        <p class="verdict good">Peak ≈ one row-band + summaries ≈ well under 1 GB.</p>
+      </div>
+
+    </div>
+    <p class="note" style="margin-top:16px">The tiny summary from Phase 1 is the bridge: it lets Phase 2 give
+      each row an embedding <b>without needing the original rows block1 consumed</b> — which is also exactly the
+      little cache you keep for predicting 15 days later.</p>
+  </div>
+
+</div>
+
+<script>
+const R=6, C=5;
+function mk(id, painter){
+  const g=document.getElementById(id);
+  g.style.gridTemplateColumns=`repeat(${C},22px)`;
+  for(let r=0;r<R;r++)for(let c=0;c<C;c++){
+    const d=document.createElement('div');
+    d.className='cell'+(painter(r,c)?' '+painter(r,c):'');
+    g.appendChild(d);
+  }
+}
+function mkSummary(id, cls){          // one small blob per column
+  const g=document.getElementById(id);
+  g.style.gridTemplateColumns=`repeat(${C},22px)`;
+  for(let c=0;c<C;c++){
+    const d=document.createElement('div');
+    d.className='cell '+cls;
+    g.appendChild(d);
+  }
+}
+
+// Stage 1: one column highlighted
+mk('g1',(r,c)=> c===2?'col':'');
+mkSummary('g1s','sum');
+
+// Stage 2: one row highlighted
+mk('g2',(r,c)=> r===2?'row':'');
+// stage2 summary: 4 tokens per row -> show a narrow column of amber blobs
+(()=>{const g=document.getElementById('g2s');g.style.gridTemplateColumns='repeat(2,22px)';
+  for(let r=0;r<R;r++)for(let c=0;c<2;c++){const d=document.createElement('div');d.className='cell'+(r===2?' row':'');g.appendChild(d);}})();
+
+// Conflict: column 2 teal, row 2 amber, crossing cell red
+mk('gx',(r,c)=>{
+  if(r===2&&c===2) return 'both';
+  if(c===2) return 'col';
+  if(r===2) return 'row';
+  return '';
+});
+
+// Bad approach: whole grid must be held
+mk('gbad',(r,c)=>'bad');
+
+// Two-phase: Phase1 = all columns feed summaries (show summaries row on top handled separately)
+mk('gp1',(r,c)=>'col');
+// Phase2: one row-band active(green), rest dead
+mk('gp2',(r,c)=> (r===2||r===3)?'done':'');
+</script>
+</body>
+</html>

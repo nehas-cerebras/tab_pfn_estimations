@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TabPFN — Feature Embedding + Column Aggregator workflow</title>
+<style>
+  :root{
+    --bg:#0f172a; --panel:#1e293b; --panel2:#273449; --ink:#e2e8f0; --muted:#94a3b8; --line:#334155;
+    --p1:#14b8a6; --p1d:#0f766e; --p2:#f59e0b; --p2d:#b45309;
+    --sum:#818cf8; --sumd:#4338ca; --rows:#34d399; --good:#22c55e; --read:#38bdf8; --write:#4ade80;
+    --cell:#334155; --cellhi:#0ea5e9;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:20px}
+  .wrap{max-width:1120px;margin:0 auto}
+  header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:6px}
+  h1{font-size:19px;margin:0;font-weight:700}
+  .badge{font-size:11px;font-weight:800;color:#0b1220;border-radius:999px;padding:3px 12px}
+  .b0{background:#64748b} .b1{background:var(--p1)} .b2{background:var(--p2)} .b3{background:var(--sum)}
+  .chunk{font-size:12px;color:var(--muted);font-weight:700}
+  .stepno{margin-left:auto;font-size:12px;color:var(--muted)}
+  .sub{color:var(--muted);font-size:12.5px;margin:2px 0 16px}
+
+  main{display:flex;gap:16px;align-items:stretch;flex-wrap:wrap}
+  .stage{flex:1 1 620px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px}
+  .mem{flex:1 1 260px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px}
+
+  /* grid + fan diagram */
+  .gridwrap{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+  .axis{font-size:10px;color:var(--muted);font-weight:700}
+  .axis.v{writing-mode:vertical-rl;transform:rotate(180deg)}
+  .grid{display:grid;gap:3px;transition:transform .4s}
+  .c{width:16px;height:16px;border-radius:3px;background:var(--cell);transition:all .45s}
+  .c.lift{background:var(--cellhi);transform:translateY(-9px);box-shadow:0 6px 12px rgba(14,165,233,.4)}
+  .c.liftr{background:var(--p2);transform:translateX(9px);box-shadow:-6px 0 12px rgba(245,158,11,.35)}
+  .gcap{font-size:11px;color:var(--muted);margin-left:6px}
+  .fanpanel{margin-left:auto;background:var(--panel2);border:1px solid var(--line);border-radius:12px;
+            padding:8px 10px 4px;text-align:center}
+  .fantitle{font-size:11px;font-weight:800;margin-bottom:2px;letter-spacing:.02em}
+  @keyframes dash{to{stroke-dashoffset:-16}}
+  .fline{stroke-dasharray:4 5;animation:dash .7s linear infinite}
+
+  /* pipeline chips */
+  .pipe{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
+  .st{font-size:10.5px;padding:4px 9px;border-radius:8px;background:var(--panel2);color:var(--muted);
+      border:1px solid var(--line);white-space:nowrap;transition:all .3s}
+  .st.on{background:var(--p1);color:#06231f;font-weight:800;border-color:var(--p1)}
+  .st.on2{background:var(--p2);color:#2b1a04;font-weight:800;border-color:var(--p2)}
+
+  /* op viz */
+  .opviz{display:flex;align-items:center;gap:12px;flex-wrap:wrap;min-height:88px;
+         background:var(--panel2);border:1px dashed var(--line);border-radius:12px;padding:16px}
+  .mx{border-radius:9px;padding:10px 12px;text-align:center;font-weight:700;font-size:12.5px;min-width:96px;
+      background:#0b1220;border:1px solid var(--line)}
+  .mx small{display:block;color:var(--muted);font-weight:600;font-size:10.5px;margin-top:3px}
+  .mx.inp{border-color:var(--cellhi)} .mx.out{border-color:var(--good)}
+  .blk{border-radius:9px;padding:10px 14px;text-align:center;font-weight:800;font-size:12.5px;color:#06231f}
+  .blk.fin{background:var(--p1)} .blk.fout{background:var(--p2)} .blk.agg{background:var(--sum);color:#0b1220}
+  .blk.s0{background:#475569;color:var(--ink)}
+  .blk small{display:block;font-weight:600;font-size:10px;opacity:.85;color:inherit}
+  .arw{color:var(--muted);font-size:18px}
+  .opnote{color:var(--muted);font-size:11px;font-style:italic}
+
+  /* memory box */
+  .mem h3{margin:0 0 4px;font-size:13px}
+  .mem .hint{color:var(--muted);font-size:11px;margin:0 0 12px}
+  .memsec{margin-bottom:14px}
+  .memsec .lbl{font-size:10.5px;color:var(--muted);font-weight:800;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px}
+  .chip{display:flex;justify-content:space-between;align-items:center;gap:8px;
+        border-radius:8px;padding:7px 10px;margin-bottom:6px;font-size:11.5px;font-weight:700;
+        background:#0b1220;border:1px solid var(--line);color:var(--muted);transition:all .35s;opacity:.4}
+  .chip .sz{font-size:10px;font-weight:600}
+  .chip.exists{opacity:1;color:var(--ink);border-color:var(--sumd)}
+  .chip.rows.exists{border-color:#15803d}
+  .chip.writing{opacity:1;color:#052e16;background:var(--write);border-color:var(--write);
+                box-shadow:0 0 0 3px rgba(74,222,128,.25)}
+  .chip.reading{opacity:1;color:#04283b;background:var(--read);border-color:var(--read);
+                box-shadow:0 0 0 3px rgba(56,189,248,.25)}
+  .flow{font-size:11px;font-weight:800;padding:2px 8px;border-radius:6px;display:inline-block;margin-top:2px}
+  .flow.w{background:var(--write);color:#052e16}
+  .flow.r{background:var(--read);color:#04283b}
+
+  /* info + controls */
+  .info{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 18px;margin-top:16px}
+  .info .t{font-weight:800;font-size:15px;margin-bottom:4px}
+  .info .d{color:#cbd5e1;font-size:13px}
+  .flops{display:flex;gap:22px;flex-wrap:wrap;margin-top:10px}
+  .flops div{font-size:12px}
+  .flops b{color:var(--p2)}
+  .flops .k{color:var(--muted);font-weight:700;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;display:block}
+  .controls{display:flex;align-items:center;gap:10px;margin-top:16px}
+  button{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:9px;
+         padding:9px 16px;font-size:13px;font-weight:700;cursor:pointer}
+  button:hover{background:#334155}
+  button.play{background:var(--good);color:#052e16;border-color:var(--good)}
+  .dots{display:flex;gap:4px;margin-left:auto;flex-wrap:wrap}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--line);cursor:pointer}
+  .dot.on{background:var(--p2)}
+  .loopnote{margin-top:8px;font-size:11.5px;color:var(--p2);font-weight:700}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Feature Embedding → Column Aggregator</h1>
+    <span class="badge b0" id="phBadge">SETUP</span>
+    <span class="chunk" id="chunkLbl"></span>
+    <span class="stepno" id="stepNo"></span>
+  </header>
+  <p class="sub">Example (max sizes): <b>N=1M train rows, C=200 columns</b>, cell dim E=128 · G=6 · col-chunk=4 · row-chunk=2048.
+     Grid below is schematic (not to scale).</p>
+
+  <main>
+    <div class="stage">
+      <div class="gridwrap">
+        <span class="axis v">rows</span>
+        <div>
+          <div class="grid" id="grid"></div>
+          <div class="axis" style="text-align:center;margin-top:4px">columns</div>
+        </div>
+        <span class="gcap" id="gcap"></span>
+        <div class="fanpanel">
+          <div class="fantitle" id="fantitle">fan-in / fan-out</div>
+          <svg id="fan" width="230" height="168"></svg>
+        </div>
+      </div>
+      <div class="pipe" id="pipe"></div>
+      <div class="opviz" id="opviz"></div>
+    </div>
+
+    <div class="mem">
+      <h3>🗄️ Memory (off-chip)</h3>
+      <p class="hint">What survives between chunks / between fit & predict.</p>
+      <div class="memsec">
+        <div class="lbl">Summaries (built once, Phase 1)</div>
+        <div class="chip" id="cs0"><span>summary₀</span><span class="sz">C×128×128</span></div>
+        <div class="chip" id="cs1"><span>summary₁</span><span class="sz">C×128×128</span></div>
+        <div class="chip" id="cs2"><span>summary₂</span><span class="sz">C×128×128</span></div>
+        <div style="font-size:10.5px;color:var(--muted)">total ≈ 19.7 MB (fp16)</div>
+      </div>
+      <div class="memsec">
+        <div class="lbl">Row embeddings (Phase 2 output)</div>
+        <div class="chip rows" id="crows"><span>512-vec / row</span><span class="sz">R×512</span></div>
+        <div style="font-size:10.5px;color:var(--muted)">≈ 1.0 GB (fp16, all rows) → feeds ICL</div>
+      </div>
+      <div id="flowIndic"></div>
+    </div>
+  </main>
+
+  <div class="info">
+    <div class="t" id="title"></div>
+    <div class="d" id="desc"></div>
+    <div class="flops" id="flopsBox"></div>
+    <div class="loopnote" id="loop"></div>
+  </div>
+
+  <div class="controls">
+    <button id="prev">◀ Prev</button>
+    <button id="play" class="play">▶ Play</button>
+    <button id="next">Next ▶</button>
+    <div class="dots" id="dots"></div>
+  </div>
+</div>
+
+<script>
+const GR=6, GC=10;                 // schematic grid (display only)
+const LIFT_COLS=[4,5];             // phase-1 lifted columns
+const LIFT_ROWS=[2,3];             // phase-2 lifted rows
+
+// ---- stations shown in the pipeline bar ----
+const P1=["pick col-chunk","stage 0: embed","L0 fan-in→s₀","L0 fan-out","L1 fan-in→s₁","L1 fan-out","L2 fan-in→s₂","store s₀/s₁/s₂"];
+const P2=["pick row-chunk","stage 0: embed","fan-out ← s₀","fan-out ← s₁","fan-out ← s₂","column aggregator","store 512-vec"];
+
+// mem state helper: empty / computing / exists / writing / reading
+function M(s0,s1,s2,rows){return {s0,s1,s2,rows};}
+
+const STEPS=[
+ // ---------- intro ----------
+ {ph:0,chunk:"",grid:"none",pipe:null,fan:null,
+  title:"The big picture",
+  desc:"Two passes over the table. PHASE 1 slices by COLUMNS to build 3 tiny per-feature summaries (needs all rows). PHASE 2 slices by ROWS, reuses those summaries, and funnels each row down to a single 512-dim vector. Step through to see every matrix, its FLOPs, the fan-in/out on the right, and what moves to/from memory.",
+  op:null, mem:M("empty","empty","empty","empty")},
+
+ // ---------- PHASE 1 ----------
+ {ph:1,chunk:"Column chunk 1 / 50",grid:"col",pipe:0,fan:null,
+  title:"Lift out a column chunk (train rows only)",
+  desc:"Take 4 columns and ALL N=1M training rows. Columns are independent, so we process them a chunk at a time. Test rows never enter Phase 1.",
+  gcap:"↑ 4 columns lifted out",
+  op:{in:["N × 4 × 6","raw grouped cells"],blk:null},
+  mem:M("empty","empty","empty","empty")},
+
+ {ph:1,chunk:"Column chunk 1 / 50",grid:"col",pipe:1,fan:null,
+  title:"Stage 0 — cell embedding (+ label for train)",
+  desc:"A linear layer maps each group of 6 raw cell values to a 128-dim vector. For train rows the target embedding is added here — that's how labels enter.",
+  op:{in:["N × 4 × 6","raw"],blk:["x_embed","Linear(6→128) + label"],out:["N × 4 × 128","cell embeddings"]},
+  flopsC:"≈ small (2·N·4·6·128)",flopsT:"negligible",
+  mem:M("empty","empty","empty","empty")},
+
+ {ph:1,chunk:"Column chunk 1 / 50",grid:"col",pipe:2,fan:"in",
+  title:"Layer 0 — fan-in (block1) → summary₀",
+  desc:"block1 reads ALL N rows of each column and squeezes them into a fixed 128×128 summary of that feature's distribution (see the fan-in on the right: many rows → few inducing points).",
+  op:{in:["N × 128","all rows"],blk:["block1","fan-in"],out:["128 × 128","summary₀"]},
+  flopsC:"8·Cc·N·128² ≈ 524 GF",flopsT:"× 50 chunks = 26.2 TF",
+  mem:M("computing","empty","empty","empty")},
+
+ {ph:1,chunk:"Column chunk 1 / 50",grid:"col",pipe:3,fan:"out",
+  title:"Layer 0 — fan-out (block2)",
+  desc:"block2 gives each train row a new embedding using summary₀ (fan-out: few inducing points → many rows). Its only job in Phase 1 is to produce the input for Layer 1's fan-in.",
+  op:{in:["N × 128 + s₀","rows + summary"],blk:["block2","fan-out"],out:["N × 128","L0 output"]},
+  flopsC:"16·Cc·N·128² ≈ 1.05 TF",flopsT:"× 50 = 52.4 TF",
+  mem:M("computing","empty","empty","empty")},
+
+ {ph:1,chunk:"Column chunk 1 / 50",grid:"col",pipe:4,fan:"in",
+  title:"Layer 1 — fan-in (block1) → summary₁",
+  desc:"Same fan-in, one layer deeper: summary₁ summarizes Layer-0's OUTPUT. A different space from summary₀ — that's why we keep all three.",
+  op:{in:["N × 128","L0 output"],blk:["block1","fan-in"],out:["128 × 128","summary₁"]},
+  flopsC:"8·Cc·N·128² ≈ 524 GF",flopsT:"× 50 = 26.2 TF",
+  mem:M("exists","computing","empty","empty")},
+
+ {ph:1,chunk:"Column chunk 1 / 50",grid:"col",pipe:5,fan:"out",
+  title:"Layer 1 — fan-out (block2)",
+  desc:"Transforms the rows again to feed Layer 2's fan-in.",
+  op:{in:["N × 128 + s₁","rows + summary"],blk:["block2","fan-out"],out:["N × 128","L1 output"]},
+  flopsC:"16·Cc·N·128² ≈ 1.05 TF",flopsT:"× 50 = 52.4 TF",
+  mem:M("exists","computing","empty","empty")},
+
+ {ph:1,chunk:"Column chunk 1 / 50",grid:"col",pipe:6,fan:"in",
+  title:"Layer 2 — fan-in (block1) → summary₂  (no fan-out!)",
+  desc:"Last layer only needs its fan-in. Its fan-out is SKIPPED — nothing downstream in Phase 1 consumes it. That's why block1 runs 3× but block2 only 2× in Phase 1.",
+  op:{in:["N × 128","L1 output"],blk:["block1","fan-in"],out:["128 × 128","summary₂"]},
+  flopsC:"8·Cc·N·128² ≈ 524 GF",flopsT:"× 50 = 26.2 TF",
+  mem:M("exists","exists","computing","empty")},
+
+ {ph:1,chunk:"Column chunk 1 / 50",grid:"col",pipe:7,fan:null,
+  title:"Store the 3 summaries → MEMORY",
+  desc:"Write summary₀/₁/₂ out. The N train rows are now thrown away — only the tiny 128×128-per-column summaries survive. Then repeat for the next column chunk.",
+  op:{in:["3 × (4 × 128 × 128)","summaries"],blk:null},
+  flopsC:"—",flopsT:"—",
+  memWrite:["s0","s1","s2"],
+  mem:M("writing","writing","writing","empty"),
+  loop:"↺ repeat for column chunks 2 … 50 (accumulating into the same summary tensors)"},
+
+ // ---------- PHASE 2 ----------
+ {ph:2,chunk:"Row chunk 1 / 489",grid:"row",pipe:0,fan:null,
+  title:"Lift out a row chunk (ALL columns)",
+  desc:"Now switch axis: take a band of 2048 rows (train + test) across all C=200 columns. block1 is done — we'll only run fan-outs, reading the cached summaries.",
+  gcap:"→ 2048-row band lifted out",
+  op:{in:["Rc × C × 6","raw grouped cells"],blk:null},
+  mem:M("exists","exists","exists","empty")},
+
+ {ph:2,chunk:"Row chunk 1 / 489",grid:"row",pipe:1,fan:null,
+  title:"Stage 0 — cell embedding (+ label for train rows)",
+  desc:"Same embedding as before. Train rows in the band get the label added; test rows don't. Everything after this point is identical for train and test rows.",
+  op:{in:["Rc × C × 6","raw"],blk:["x_embed","Linear(6→128) + label"],out:["Rc × C × 128","cell embeddings"]},
+  flopsC:"≈ small",flopsT:"negligible",
+  mem:M("exists","exists","exists","empty")},
+
+ {ph:2,chunk:"Row chunk 1 / 489",grid:"row",pipe:2,fan:"out",
+  title:"Layer 0 — fan-out ← summary₀  (READ from memory)",
+  desc:"Each row attends to the cached summary₀ (fan-out on the right: summary → rows). No block1, no train rows needed — just the 128×128 summary read back from memory.",
+  op:{in:["Rc × C × 128 + s₀","rows + summary"],blk:["block2","fan-out ← s₀"],out:["Rc × C × 128",""]},
+  flopsC:"16·C·Rc·128² ≈ 107 GF",flopsT:"× 489 = 52.5 TF",
+  memRead:["s0"],
+  mem:M("reading","exists","exists","empty")},
+
+ {ph:2,chunk:"Row chunk 1 / 489",grid:"row",pipe:3,fan:"out",
+  title:"Layer 1 — fan-out ← summary₁  (READ)",
+  desc:"Next layer's fan-out reads summary₁.",
+  op:{in:["Rc × C × 128 + s₁","rows + summary"],blk:["block2","fan-out ← s₁"],out:["Rc × C × 128",""]},
+  flopsC:"16·C·Rc·128² ≈ 107 GF",flopsT:"× 489 = 52.5 TF",
+  memRead:["s1"],
+  mem:M("exists","reading","exists","empty")},
+
+ {ph:2,chunk:"Row chunk 1 / 489",grid:"row",pipe:4,fan:"out",
+  title:"Layer 2 — fan-out ← summary₂  (READ)",
+  desc:"Third fan-out reads summary₂. That's block2 ×3 in Phase 2.",
+  op:{in:["Rc × C × 128 + s₂","rows + summary"],blk:["block2","fan-out ← s₂"],out:["Rc × C × 128","embedded cells"]},
+  flopsC:"16·C·Rc·128² ≈ 107 GF",flopsT:"× 489 = 52.5 TF",
+  memRead:["s2"],
+  mem:M("exists","exists","reading","empty")},
+
+ {ph:2,chunk:"Row chunk 1 / 489",grid:"row",pipe:5,fan:null,
+  title:"Column Aggregator — mix columns → 4 CLS → 512",
+  desc:"Prepend 4 CLS tokens, run 3 transformer blocks that MIX the C columns per row, read out the 4 CLS tokens, and concat 4×128 = 512. The C columns collapse to one 512-dim vector per row.",
+  op:{in:["Rc × (4+C) × 128","cols + CLS"],blk:["aggregator","3 blocks + readout"],out:["Rc × 512","512-vec / row"]},
+  flopsC:"36·Rc·S·E² + 8·Rc·S²·E ≈ 334 GF",flopsT:"× 489 = 163 TF  (S=4+C=204)",
+  mem:M("exists","exists","exists","empty")},
+
+ {ph:2,chunk:"Row chunk 1 / 489",grid:"row",pipe:6,fan:null,
+  title:"Store the 512-vectors → MEMORY",
+  desc:"Write this band's per-row 512-dim embeddings out. Repeat for every row chunk. The full (R×C×128) grid is never held — each band collapses immediately.",
+  op:{in:["Rc × 512","row embeddings"],blk:null},
+  flopsC:"—",flopsT:"—",
+  memWrite:["rows"],
+  mem:M("exists","exists","exists","writing"),
+  loop:"↺ repeat for row chunks 2 … 489"},
+
+ // ---------- outro ----------
+ {ph:3,chunk:"",grid:"none",pipe:null,fan:null,
+  title:"Done → hand off to the ICL transformer",
+  desc:"The R×512 row embeddings now feed the 24-layer ICL transformer — a SEPARATE stage that attends ACROSS rows (test rows attend to train rows) and builds the big KV cache. That's where the O(N²) cost lives; everything you just saw is only linear-ish in N.",
+  op:null,
+  mem:M("exists","exists","exists","exists")},
+];
+
+// ---------- build static grid ----------
+const grid=document.getElementById('grid');
+grid.style.gridTemplateColumns=`repeat(${GC},16px)`;
+const cells=[];
+for(let r=0;r<GR;r++)for(let c=0;c<GC;c++){const d=document.createElement('div');d.className='c';grid.appendChild(d);cells.push({r,c,el:d});}
+
+// pipeline + dots
+const pipeEl=document.getElementById('pipe');
+const dotsEl=document.getElementById('dots');
+STEPS.forEach((_,i)=>{const d=document.createElement('div');d.className='dot';d.onclick=()=>go(i);dotsEl.appendChild(d);});
+
+let idx=0, playing=false, timer=null;
+
+function setPipe(step){
+  pipeEl.innerHTML='';
+  const list = step.ph===1?P1 : step.ph===2?P2 : null;
+  if(!list){pipeEl.style.display='none';return;}
+  pipeEl.style.display='flex';
+  list.forEach((s,i)=>{const d=document.createElement('div');
+    d.className='st'+(i===step.pipe?(step.ph===1?' on':' on2'):'');
+    d.textContent=(i+1)+'. '+s; pipeEl.appendChild(d);});
+}
+
+function setGrid(step){
+  cells.forEach(o=>{o.el.className='c';});
+  grid.style.transform='none';
+  if(step.grid==='col') cells.forEach(o=>{ if(LIFT_COLS.includes(o.c)) o.el.classList.add('lift'); });
+  if(step.grid==='row') cells.forEach(o=>{ if(LIFT_ROWS.includes(o.r)) o.el.classList.add('liftr'); });
+  document.getElementById('gcap').textContent=step.gcap||'';
+}
+
+// ---------- fan-in / fan-out diagram ----------
+function drawFan(step){
+  const svg=document.getElementById('fan');
+  const tt=document.getElementById('fantitle');
+  const W=230,H=168,pad=22,topPad=14,botPad=30;
+  const mode=step.fan;
+  if(!mode){
+    tt.textContent='—'; tt.style.color='#64748b';
+    svg.innerHTML='<text x="115" y="90" fill="#475569" font-size="11" text-anchor="middle">(not a fan step)</text>';
+    return;
+  }
+  const many=8, few=3;
+  const leftN = mode==='in'?many:few;      // source always on the left
+  const rightN= mode==='in'?few:many;      // target on the right
+  const color = mode==='in'?'#14b8a6':'#f59e0b';
+  const leftX=pad, rightX=W-pad;
+  function ys(n){const a=[];const span=H-topPad-botPad;const gap=span/(n-1||1);
+    for(let i=0;i<n;i++)a.push(topPad + (n===1?span/2:i*gap));return a;}
+  const ly=ys(leftN), ry=ys(rightN);
+  let h=`<defs><marker id="ah" markerWidth="7" markerHeight="7" refX="5.5" refY="3" orient="auto">
+         <path d="M0,0 L6,3 L0,6 Z" fill="${color}"/></marker></defs>`;
+  // all-to-all lines (the "fan")
+  for(let i=0;i<leftN;i++)for(let j=0;j<rightN;j++){
+    h+=`<line class="fline" x1="${leftX+7}" y1="${ly[i]}" x2="${rightX-7}" y2="${ry[j]}"
+         stroke="${color}" stroke-width="1" opacity="0.45" marker-end="url(#ah)"/>`;
+  }
+  // nodes
+  for(let i=0;i<leftN;i++) h+=`<circle cx="${leftX}" cy="${ly[i]}" r="5" fill="${color}"/>`;
+  for(let j=0;j<rightN;j++) h+=`<circle cx="${rightX}" cy="${ry[j]}" r="6" fill="${color}"/>`;
+  // labels
+  const leftLbl = mode==='in'?'N rows':'128 sum';
+  const rightLbl= mode==='in'?'128 sum':'rows';
+  h+=`<text x="${leftX}" y="${H-12}" fill="${color}" font-size="10.5" font-weight="700" text-anchor="middle">${leftLbl}</text>`;
+  h+=`<text x="${rightX}" y="${H-12}" fill="${color}" font-size="10.5" font-weight="700" text-anchor="middle">${rightLbl}</text>`;
+  svg.innerHTML=h;
+  tt.style.color=color;
+  tt.textContent = mode==='in' ? 'FAN-IN · rows → summary' : 'FAN-OUT · summary → rows';
+}
+
+function mxHTML(arr,cls){return `<div class="mx ${cls||''}">${arr[0]}<small>${arr[1]||''}</small></div>`;}
+function setOp(step){
+  const box=document.getElementById('opviz');
+  if(!step.op){box.innerHTML=`<span class="opnote">${step.title}</span>`;return;}
+  let h='';
+  h+=mxHTML(step.op.in,'inp');
+  if(step.op.blk){
+    const bc = step.op.blk[0].includes('block1')?'fin':
+               step.op.blk[0].includes('block2')?'fout':
+               step.op.blk[0].includes('aggreg')?'agg':'s0';
+    h+='<span class="arw">→</span>';
+    h+=`<div class="blk ${bc}">${step.op.blk[0]}<small>${step.op.blk[1]||''}</small></div>`;
+    h+='<span class="arw">→</span>';
+    h+=mxHTML(step.op.out,'out');
+  }
+  box.innerHTML=h;
+}
+
+function setMem(step){
+  const map={s0:'cs0',s1:'cs1',s2:'cs2',rows:'crows'};
+  const st={s0:step.mem.s0,s1:step.mem.s1,s2:step.mem.s2,rows:step.mem.rows};
+  for(const k in map){
+    const el=document.getElementById(map[k]);
+    el.className='chip'+(k==='rows'?' rows':'');
+    let s=st[k];
+    if(step.memWrite&&step.memWrite.includes(k)) s='writing';
+    if(step.memRead&&step.memRead.includes(k)) s='reading';
+    if(s==='exists'||s==='writing'||s==='reading') el.classList.add(s==='exists'?'exists':s);
+    if(s==='computing'){el.classList.add('exists');el.style.opacity='.7';}
+    else el.style.opacity='';
+  }
+  const fi=document.getElementById('flowIndic');
+  if(step.memWrite) fi.innerHTML='<span class="flow w">▲ writing OUT to memory</span>';
+  else if(step.memRead) fi.innerHTML='<span class="flow r">▼ reading IN from memory</span>';
+  else fi.innerHTML='';
+}
+
+function setInfo(step){
+  document.getElementById('title').textContent=step.title;
+  document.getElementById('desc').textContent=step.desc;
+  const fb=document.getElementById('flopsBox');
+  if(step.flopsC){fb.innerHTML=
+    `<div><span class="k">FLOPs / chunk</span><b>${step.flopsC}</b></div>`+
+    `<div><span class="k">Total FLOPs</span><b>${step.flopsT}</b></div>`;}
+  else fb.innerHTML='';
+  document.getElementById('loop').textContent=step.loop||'';
+}
+
+const phName={0:['SETUP','b0'],1:['PHASE 1 · columns','b1'],2:['PHASE 2 · rows','b2'],3:['ICL HAND-OFF','b3']};
+function render(){
+  const step=STEPS[idx];
+  const [pn,pc]=phName[step.ph];
+  const badge=document.getElementById('phBadge');
+  badge.textContent=pn; badge.className='badge '+pc;
+  document.getElementById('chunkLbl').textContent=step.chunk||'';
+  document.getElementById('stepNo').textContent=`step ${idx+1} / ${STEPS.length}`;
+  setPipe(step); setGrid(step); drawFan(step); setOp(step); setMem(step); setInfo(step);
+  [...dotsEl.children].forEach((d,i)=>d.classList.toggle('on',i===idx));
+  document.getElementById('prev').disabled=(idx===0);
+}
+function go(i){idx=Math.max(0,Math.min(STEPS.length-1,i));render();}
+function next(){ if(idx<STEPS.length-1){idx++;render();} else stop(); }
+function prev(){ if(idx>0){idx--;render();} }
+function play(){ playing=true; const b=document.getElementById('play'); b.textContent='⏸ Pause'; b.classList.remove('play');
+  timer=setInterval(()=>{ if(idx>=STEPS.length-1){stop();} else next(); },1900); }
+function stop(){ playing=false; clearInterval(timer);
+  const b=document.getElementById('play'); b.textContent='▶ Play'; b.classList.add('play'); }
+
+document.getElementById('next').onclick=()=>{stop();next();};
+document.getElementById('prev').onclick=()=>{stop();prev();};
+document.getElementById('play').onclick=()=>{ playing?stop():play(); };
+document.addEventListener('keydown',e=>{if(e.key==='ArrowRight'){stop();next();}if(e.key==='ArrowLeft'){stop();prev();}});
+render();
+</script>
+</body>
+</html>
